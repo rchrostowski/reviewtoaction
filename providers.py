@@ -1,19 +1,7 @@
-import streamlit as st
 import requests
 import pandas as pd
 
-def _secret(name: str) -> str | None:
-    return st.secrets.get(name, None)
-
-def serpapi_search_place(query: str, location: str | None = None) -> list[dict]:
-    """
-    Returns a list of candidate places from SerpApi Google Maps search.
-    This is a best-effort parser because SerpApi response schemas can vary by engine/version.
-    """
-    api_key = _secret("SERPAPI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Missing SERPAPI_API_KEY in Streamlit secrets.")
-
+def serpapi_search_place(api_key: str, query: str, location: str | None = None) -> list[dict]:
     params = {
         "api_key": api_key,
         "engine": "google_maps",
@@ -27,7 +15,6 @@ def serpapi_search_place(query: str, location: str | None = None) -> list[dict]:
     r.raise_for_status()
     data = r.json()
 
-    # Typical fields: "local_results" (list)
     results = data.get("local_results") or data.get("place_results") or []
     places = []
     for item in results[:10]:
@@ -40,7 +27,6 @@ def serpapi_search_place(query: str, location: str | None = None) -> list[dict]:
             "data_id": item.get("data_id"),
         })
 
-    # If empty, try knowledge graph place_result
     if not places and data.get("place_results"):
         pr = data["place_results"]
         places.append({
@@ -54,19 +40,10 @@ def serpapi_search_place(query: str, location: str | None = None) -> list[dict]:
 
     return places
 
-def serpapi_fetch_reviews(place_id_or_data_id: str, limit: int = 200) -> pd.DataFrame:
-    """
-    Fetch reviews using SerpApi Google Maps Reviews engine.
-    SerpApi schema varies; we parse common shapes.
-    """
-    api_key = _secret("SERPAPI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Missing SERPAPI_API_KEY in Streamlit secrets.")
-
+def serpapi_fetch_reviews(api_key: str, place_id_or_data_id: str, limit: int = 200) -> pd.DataFrame:
     params = {
         "api_key": api_key,
         "engine": "google_maps_reviews",
-        # different SerpApi setups use place_id or data_id
         "place_id": place_id_or_data_id,
         "hl": "en",
     }
@@ -75,7 +52,6 @@ def serpapi_fetch_reviews(place_id_or_data_id: str, limit: int = 200) -> pd.Data
     r.raise_for_status()
     data = r.json()
 
-    # common: "reviews" or "reviews_results"
     reviews = data.get("reviews") or data.get("reviews_results") or []
 
     rows = []
@@ -90,3 +66,4 @@ def serpapi_fetch_reviews(place_id_or_data_id: str, limit: int = 200) -> pd.Data
         })
 
     return pd.DataFrame(rows)
+
