@@ -8,6 +8,10 @@ from scoring import compute_issue_table
 from report import build_pdf_report
 from providers import serpapi_search_place, serpapi_fetch_reviews
 
+# ========= PUT YOUR SERPAPI KEY HERE =========
+SERPAPI_API_KEY = "PASTE_YOUR_KEY_HERE"
+# ===========================================
+
 st.set_page_config(page_title="Review-to-Action Engine", layout="wide")
 
 def ensure_workspace():
@@ -37,6 +41,16 @@ def load_csv(file) -> pd.DataFrame:
     df["review_text"] = df["review_text"].astype(str)
     return df
 
+@st.cache_data(show_spinner=False, ttl=60*30)
+def cached_place_search(query: str, location: str):
+    return serpapi_search_place(SERPAPI_API_KEY, query, location or None)
+
+@st.cache_data(show_spinner=False, ttl=60*30)
+def cached_fetch_reviews(place_id: str, limit: int):
+    df = serpapi_fetch_reviews(SERPAPI_API_KEY, place_id, limit=limit)
+    # cache_data requires return to be serializable; dataframe is ok
+    return df
+
 def main():
     init_db()
     ws = ensure_workspace()
@@ -44,14 +58,19 @@ def main():
     st.title("🧠 Review-to-Action Engine")
     st.caption("Search any place → import reviews → find issues → prioritize actions → download PDF.")
 
+    if not SERPAPI_API_KEY or SERPAPI_API_KEY.strip() == "PASTE_YOUR_KEY_HERE":
+        st.warning("You must paste your SerpApi key into app.py (SERPAPI_API_KEY) for search/import to work.")
+
     with st.sidebar:
         st.subheader("Analysis settings")
         n_clusters = st.slider("Number of issue clusters", 2, 12, 6)
+
         st.divider()
         st.subheader("Workspace")
-        st.write("This session workspace ID:")
+        st.caption("This session stores reviews under a workspace id (local testing).")
         st.code(ws)
-        if st.button("🧹 Clear my workspace reviews"):
+
+        if st.button("🧹 Clear workspace reviews"):
             delete_all_reviews(ws)
             st.success("Cleared workspace reviews.")
 
@@ -60,23 +79,23 @@ def main():
     # --- Search & Import ---
     with tab1:
         st.subheader("Search a place and import reviews")
-        st.write("Requires `SERPAPI_API_KEY` in Streamlit secrets. If missing, use Upload/Paste tab.")
 
         q = st.text_input("Search (e.g., 'Blue Bottle Coffee Boston' or 'Joe's Pizza NYC')")
         location = st.text_input("Optional location hint (e.g., 'Boston, MA')", value="")
 
-        colA, colB = st.columns([1, 1])
-        with colA:
-            if st.button("Search places", use_container_width=True):
+        if st.button("Search places", use_container_width=True, disabled=not SERPAPI_API_KEY or SERPAPI_API_KEY.strip()=="PASTE_YOUR_KEY_HERE"):
+            if not q.strip():
+                st.warning("Enter a search query.")
+            else:
                 try:
-                    places = serpapi_search_place(q, location=location or None)
+                    places = cached_place_search(q.strip(), location.strip())
                     if not places:
                         st.warning("No places found. Try a more specific query.")
                     else:
                         st.session_state["place_candidates"] = places
                         st.success(f"Found {len(places)} candidates.")
                 except Exception as e:
-                    st.error(str(e))
+                    st.error(f"Search failed: {e}")
 
         places = st.session_state.get("place_candidates", [])
         if places:
@@ -87,22 +106,22 @@ def main():
             idx = st.selectbox("Candidates", options=list(range(len(places))), format_func=lambda i: labels[i])
 
             limit = st.slider("Max reviews to import", 10, 500, 200)
-            if st.button("Import reviews for selected place", use_container_width=True):
+            if st.button("Import reviews for selected place", use_container_width=True, disabled=not SERPAPI_API_KEY or SERPAPI_API_KEY.strip()=="PASTE_YOUR_KEY_HERE"):
                 chosen = places[idx]
                 pid = chosen.get("place_id") or chosen.get("data_id")
                 if not pid:
-                    st.error("No place_id/data_id found for this place. Try another candidate.")
+                    st.error("No place_id/data_id found. Try another candidate.")
                 else:
                     try:
-                        df_imp = serpapi_fetch_reviews(pid, limit=limit)
+                        df_imp = cached_fetch_reviews(str(pid), int(limit))
                         if df_imp is None or df_imp.empty:
-                            st.warning("No reviews returned. Some places may block or have limited review access.")
+                            st.warning("No reviews returned for this place (or access limited).")
                         else:
                             count = insert_reviews(ws, df_imp, source="serpapi")
                             st.success(f"Imported {count} reviews into your workspace.")
                             st.session_state["current_place_name"] = chosen["title"]
                     except Exception as e:
-                        st.error(str(e))
+                        st.error(f"Import failed: {e}")
 
     # --- Upload / Paste ---
     with tab2:
@@ -135,11 +154,11 @@ def main():
         st.write(f"Reviews in workspace: **{len(df_all)}**")
         st.dataframe(df_all.head(50), use_container_width=True)
 
-    # --- Analysis shared ---
+    # --- Shared analysis ---
     df_all = fetch_reviews(ws)
     if len(df_all) > 0:
         df_sent = add_sentiment(df_all)
-        df_clustered, cluster_keywords = cluster_issues(df_sent, n_clusters=n_clusters)
+        df_clustered, cluster_keywords = cluster_issues(df_sent, n_clusters=int(n_clusters))
         issue_table = compute_issue_table(df_clustered, cluster_keywords)
     else:
         df_sent = df_clustered = cluster_keywords = issue_table = None
@@ -169,12 +188,6 @@ def main():
                 st.write("**Issue frequency**")
                 st.bar_chart(issue_table[["issue_label", "frequency"]].set_index("issue_label"))
 
-            st.divider()
-            st.write("**Cluster keywords**")
-            for _, r in issue_table.head(8).iterrows():
-                cid = int(r["cluster"])
-                st.write(f"- **{r['issue_label']}** → {', '.join(cluster_keywords.get(cid, []))}")
-
     # --- PDF report ---
     with tab4:
         st.subheader("PDF Report")
@@ -183,7 +196,6 @@ def main():
         else:
             place_name = st.session_state.get("current_place_name", "Selected Place / Business")
 
-            # quotes for top issues
             top_quotes = {}
             for _, r in issue_table.head(5).iterrows():
                 cid = int(r["cluster"])
