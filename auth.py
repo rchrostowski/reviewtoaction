@@ -10,15 +10,12 @@ class AuthUser:
     is_admin: bool = False
 
 def _app_salt() -> str:
-    # Required for stable hashing across restarts/deployments
     salt = st.secrets.get("APP_SALT", None)
     if not salt:
-        # Works locally, but you MUST set APP_SALT in production secrets.
         salt = "dev_salt_change_me"
     return str(salt)
 
 def hash_password(password: str) -> str:
-    # salted SHA256 (simple). For larger production, use bcrypt/argon2.
     msg = (_app_salt() + "::" + password).encode("utf-8")
     return hashlib.sha256(msg).hexdigest()
 
@@ -26,8 +23,15 @@ def verify_password(password: str, stored_hash: str) -> bool:
     candidate = hash_password(password)
     return hmac.compare_digest(candidate, stored_hash)
 
-def ensure_admin_user_exists():
-    # admin password is stored in secrets; create/rotate from secrets
+def ensure_admin_user_exists_once():
+    """
+    IMPORTANT: only do this ONCE per session.
+    Doing DB writes every rerun can contribute to weird loop behavior on some deployments.
+    """
+    if st.session_state.get("_admin_bootstrap_done", False):
+        return
+    st.session_state["_admin_bootstrap_done"] = True
+
     admin_pw = st.secrets.get("ADMIN_PASSWORD", None)
     if admin_pw:
         upsert_user("admin", hash_password(str(admin_pw)))
@@ -35,8 +39,17 @@ def ensure_admin_user_exists():
 def login_panel() -> AuthUser | None:
     st.sidebar.header("🔐 Login")
 
-    username = st.sidebar.text_input("Username")
-    password = st.sidebar.text_input("Password", type="password")
+    # If already signed in, do NOT show login inputs (reduces weird state)
+    if st.session_state.get("auth_user"):
+        u = st.session_state["auth_user"]
+        st.sidebar.success(f"Signed in as: {u}")
+        if st.sidebar.button("Sign out", use_container_width=True):
+            st.session_state["auth_user"] = None
+            st.rerun()
+        return AuthUser(username=u, is_admin=(u == "admin"))
+
+    username = st.sidebar.text_input("Username", key="login_username")
+    password = st.sidebar.text_input("Password", type="password", key="login_password")
 
     if st.sidebar.button("Sign in", use_container_width=True):
         if not username or not password:
@@ -46,28 +59,24 @@ def login_panel() -> AuthUser | None:
         stored = get_user_hash(username)
         if stored and verify_password(password, stored):
             st.session_state["auth_user"] = username
+            # Clear input fields
+            st.session_state["login_username"] = ""
+            st.session_state["login_password"] = ""
             st.sidebar.success("Signed in.")
-            return AuthUser(username=username, is_admin=(username == "admin"))
-        st.sidebar.error("Invalid credentials.")
-        return None
-
-    # already signed in
-    if st.session_state.get("auth_user"):
-        u = st.session_state["auth_user"]
-        st.sidebar.success(f"Signed in as: {u}")
-        if st.sidebar.button("Sign out", use_container_width=True):
-            st.session_state["auth_user"] = None
-            st.rerun()
-        return AuthUser(username=u, is_admin=(u == "admin"))
+            st.rerun()  # one clean rerun to render the app in signed-in state
+        else:
+            st.sidebar.error("Invalid credentials.")
+            return None
 
     return None
 
 def require_login() -> AuthUser:
-    ensure_admin_user_exists()
+    ensure_admin_user_exists_once()
     user = login_panel()
     if user is None:
         st.title("Review-to-Action Intelligence Engine")
         st.info("Please sign in to continue.")
         st.stop()
     return user
+
 
