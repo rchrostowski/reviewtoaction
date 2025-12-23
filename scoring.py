@@ -1,6 +1,5 @@
 import pandas as pd
 
-# Simple action templates by keyword cues
 ACTION_RULES = [
     (["wait", "line", "slow", "minutes"], "Reduce wait times: add staff at peak hours, simplify workflow, prep high-demand items."),
     (["rude", "attitude", "unfriendly"], "Improve service: quick staff coaching, greeting script, and manager follow-up on complaints."),
@@ -11,7 +10,6 @@ ACTION_RULES = [
 ]
 
 def issue_name_from_keywords(keywords: list[str]) -> str:
-    # Make a readable short label
     if not keywords:
         return "General"
     return ", ".join(keywords[:3])
@@ -24,28 +22,21 @@ def recommended_action(keywords: list[str]) -> str:
     return "Review top quotes and implement a simple SOP change; measure results weekly."
 
 def compute_issue_table(df: pd.DataFrame, cluster_keywords: dict) -> pd.DataFrame:
-    """
-    df must have: cluster, sentiment_compound, sentiment_label
-    """
     total = len(df)
     rows = []
     for cluster_id, sub in df.groupby("cluster"):
         freq = len(sub)
         freq_pct = freq / total if total else 0.0
 
-        # Severity: focus on negative sentiment
-        # Convert compound (-1..1) to severity (0..1), higher means worse
         avg_comp = float(sub["sentiment_compound"].mean())
-        severity = max(0.0, (-avg_comp + 1) / 2)  # negative => higher severity
+        severity = max(0.0, (-avg_comp + 1) / 2)  # 0..1
 
-        # Ease: heuristic (for MVP). Later can be user-input.
-        # Assume most operational fixes are medium-easy; nudge up if keywords hint operational.
         kws = cluster_keywords.get(cluster_id, [])
         ease = 0.65
         if any(k in " ".join(kws).lower() for k in ["clean", "bathroom", "staff", "wait", "line", "schedule"]):
             ease = 0.75
 
-        priority = (freq_pct * 100) * (severity * 100) * (ease * 100) / 10000  # keep scale sane
+        priority = (freq_pct * 100) * (severity * 100) * (ease * 100) / 10000
 
         rows.append({
             "cluster": int(cluster_id),
@@ -59,6 +50,6 @@ def compute_issue_table(df: pd.DataFrame, cluster_keywords: dict) -> pd.DataFram
             "recommended_action": recommended_action(kws),
         })
 
-    out = pd.DataFrame(rows).sort_values("priority_score", ascending=False).reset_index(drop=True)
-    return out
+    return pd.DataFrame(rows).sort_values("priority_score", ascending=False).reset_index(drop=True)
+
 
