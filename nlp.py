@@ -11,7 +11,6 @@ def add_sentiment(df: pd.DataFrame) -> pd.DataFrame:
     out["sentiment_compound"] = out["review_text"].astype(str).apply(
         lambda t: analyzer.polarity_scores(t)["compound"]
     )
-    # map to rough labels
     out["sentiment_label"] = pd.cut(
         out["sentiment_compound"],
         bins=[-1.01, -0.05, 0.05, 1.01],
@@ -20,14 +19,8 @@ def add_sentiment(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def cluster_issues(df: pd.DataFrame, n_clusters: int = 6) -> tuple[pd.DataFrame, dict]:
-    """
-    Returns:
-      df_with_cluster
-      cluster_keywords: {cluster_id: [kw1, kw2, ...]}
-    """
     texts = df["review_text"].astype(str).tolist()
     if len(texts) < 5:
-        # too small; put everything into 1 cluster
         df2 = df.copy()
         df2["cluster"] = 0
         return df2, {0: ["mixed"]}
@@ -47,7 +40,6 @@ def cluster_issues(df: pd.DataFrame, n_clusters: int = 6) -> tuple[pd.DataFrame,
     df2 = df.copy()
     df2["cluster"] = clusters
 
-    # top keywords per cluster
     terms = np.array(vect.get_feature_names_out())
     cluster_keywords = {}
     for c in range(n_clusters):
@@ -55,7 +47,6 @@ def cluster_issues(df: pd.DataFrame, n_clusters: int = 6) -> tuple[pd.DataFrame,
         if len(idx) == 0:
             cluster_keywords[c] = ["(empty)"]
             continue
-        # average tf-idf for docs in cluster
         mean_tfidf = X[idx].mean(axis=0)
         mean_tfidf = np.asarray(mean_tfidf).ravel()
         top = mean_tfidf.argsort()[::-1][:8]
