@@ -9,7 +9,7 @@ from report import build_pdf_report
 from providers import serpapi_search_place, serpapi_fetch_reviews
 
 # ========= PUT YOUR SERPAPI KEY HERE =========
-SERPAPI_API_KEY = "PASTE_YOUR_KEY_HERE"
+SERPAPI_API_KEY = "98451dfa9697cd2536734c927acec766d128bde2d395246740b1c7a7908936d7"
 # ===========================================
 
 st.set_page_config(page_title="Review-to-Action Engine", layout="wide")
