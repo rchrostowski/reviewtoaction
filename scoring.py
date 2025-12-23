@@ -7,9 +7,11 @@ ACTION_RULES = [
     (["price", "expensive", "cost"], "Address pricing: highlight value, add bundles, or adjust portion/quality messaging."),
     (["cold", "hot", "temperature"], "Fix temperature/quality: check holding times, packaging, and handoff process."),
     (["schedule", "appointment", "booking"], "Fix scheduling: tighten booking rules, add buffer time, and confirm appointments."),
+    (["noise", "loud", "music"], "Improve ambience: adjust music volume, add quiet zones, and manage peak-time crowding."),
+    (["parking", "traffic"], "Reduce parking friction: signage, partner lots, peak-time guidance, and clear directions."),
 ]
 
-def issue_name_from_keywords(keywords: list[str]) -> str:
+def issue_label_from_keywords(keywords: list[str]) -> str:
     if not keywords:
         return "General"
     return ", ".join(keywords[:3])
@@ -24,23 +26,28 @@ def recommended_action(keywords: list[str]) -> str:
 def compute_issue_table(df: pd.DataFrame, cluster_keywords: dict) -> pd.DataFrame:
     total = len(df)
     rows = []
+
     for cluster_id, sub in df.groupby("cluster"):
         freq = len(sub)
         freq_pct = freq / total if total else 0.0
 
+        # sentiment compound in [-1, 1]
         avg_comp = float(sub["sentiment_compound"].mean())
-        severity = max(0.0, (-avg_comp + 1) / 2)  # 0..1
+        # severity 0..1 (more negative => higher severity)
+        severity = max(0.0, (-avg_comp + 1) / 2)
 
-        kws = cluster_keywords.get(cluster_id, [])
+        kws = cluster_keywords.get(int(cluster_id), [])
+        # heuristic ease score
         ease = 0.65
         if any(k in " ".join(kws).lower() for k in ["clean", "bathroom", "staff", "wait", "line", "schedule"]):
             ease = 0.75
 
+        # priority (scaled)
         priority = (freq_pct * 100) * (severity * 100) * (ease * 100) / 10000
 
         rows.append({
             "cluster": int(cluster_id),
-            "issue_label": issue_name_from_keywords(kws),
+            "issue_label": issue_label_from_keywords(kws),
             "frequency": freq,
             "frequency_pct": round(freq_pct * 100, 1),
             "avg_sentiment": round(avg_comp, 3),
@@ -51,5 +58,6 @@ def compute_issue_table(df: pd.DataFrame, cluster_keywords: dict) -> pd.DataFram
         })
 
     return pd.DataFrame(rows).sort_values("priority_score", ascending=False).reset_index(drop=True)
+
 
 
